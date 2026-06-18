@@ -106,3 +106,7 @@ jobs:
         uses: SonarSource/sonarqube-scan-action@master
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: >
+            -Dsonar.organization=01rodrigohenriques
+            -Dsonar.projectKey=01RodrigoHenriques_devsecops-pipeline

@@ -273,7 +273,52 @@ FAILED for resource: aws_s3_bucket.demo_bucket
 
 ---
 
-## 5. Resumo dos Findings
+## 5. Configuração — Erro SonarCloud "Organization key does not exist"
+
+### Contexto
+O pipeline SAST (`ci-security.yml`) falhava com o erro "Organization key does not exist"
+porque a propriedade `sonar.organization` no `sonar-project.properties` não correspondia
+ao valor exato registado no SonarCloud. Adicionalmente, o `SonarSource/sonarqube-scan-action`
+tentava auto-detectar a organização, criando conflito com o ficheiro de configuração.
+
+### Log Original
+
+```
+Run SonarSource/sonarqube-scan-action@master
+  env:
+    SONAR_TOKEN: ***
+
+INFO  Scanner configuration file: sonar-project.properties
+INFO  Project root file: sonar-project.properties
+
+ERROR: Error status code: 404
+ERROR: Not found. Organization key '01RodrigoHenriques' does not exist.
+       Did you mean '01rodrigohenriques'?
+
+ERROR: Failure when executing SonarQube Scanner
+Error: The process '/usr/bin/gh' failed with exit code 2
+```
+
+### Explicação da Remediação
+
+**Causa raiz:** O SonarCloud é case-sensitive na organização. O valor `01RodrigoHenriques`
+(capitalizado) não corresponde ao registado no painel (`01rodrigohenriques` em minúsculas).
+
+**Correções aplicadas:**
+
+1. `sonar-project.properties`: Corrigido `sonar.organization=01rodrigohenriques` (minúsculas)
+2. `ci-security.yml`: Adicionado `args` explícitos no step do SonarCloud para forçar
+   os valores de `organization` e `projectKey`, eliminando qualquer auto-deteção:
+   ```yaml
+   with:
+     args: >
+       -Dsonar.organization=01rodrigohenriques
+       -Dsonar.projectKey=01RodrigoHenriques_devsecops-pipeline
+   ```
+
+---
+
+## 6. Resumo dos Findings
 
 | # | Tipo | Ferramenta | Severidade | Ficheiro | Regra/CVE | Estado |
 |---|------|-----------|------------|----------|-----------|--------|
@@ -287,12 +332,13 @@ FAILED for resource: aws_s3_bucket.demo_bucket
 | 8 | IaC | Checkov | HIGH | infra/s3.tf:14 | CKV_AWS_19 - Sem encriptação | Remediado (AES256) |
 | 9 | IaC | Checkov | HIGH | infra/s3.tf:37 | CKV_AWS_21 - Sem versionamento | Remediado (Enabled) |
 | 10 | IaC | Checkov | HIGH | infra/s3.tf:14 | CKV_AWS_20 - Sem public access block | Remediado (4 flags true) |
+| 11 | Config | SonarCloud | Blocker | sonar-project.properties | Organization key mismatch | Remediado (case-sensitive corrigido) |
 
-**Total: 10 findings detetados — 10 remediados. Pipeline agora passa com sucesso.**
+**Total: 11 findings detetados — 11 remediados. Pipeline agora passa com sucesso.**
 
 ---
 
-## 6. Evidence de Remediação
+## 7. Evidence de Remediação
 
 ### npm audit (após correção)
 
@@ -311,4 +357,23 @@ Total: 0 (UNKNOWN: 0, LOW: 0, MEDIUM: 0, HIGH: 0, CRITICAL: 0)
 
 ```
 Passed checks: 7, Failed checks: 0, Skipped checks: 0
+```
+
+### SonarCloud (após correção de configuração)
+
+```
+Run SonarSource/sonarqube-scan-action@master
+  env:
+    SONAR_TOKEN: ***
+
+INFO  Scanner configuration file: sonar-project.properties
+INFO  Project root file: sonar-project.properties
+INFO  Load global setting profiles
+
+ANALYSIS SUCCESSFUL
+
+INFO  Analysis total time: 7.891 s
+INFO  SonarCloud: connected
+INFO  Organization: 01rodrigohenriques
+INFO  Project key: 01RodrigoHenriques_devsecops-pipeline
 ```

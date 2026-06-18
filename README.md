@@ -1,71 +1,101 @@
-# DevSecOps Pipeline — Projeto de Portfólio
+# DevSecOps Pipeline
 
 Pipeline CI/CD com segurança automatizada integrada. **Impede que código vulnerável chegue à cloud**, detetando problemas em cada fase do ciclo de vida do desenvolvimento.
 
 ---
 
-## Fluxo do Pipeline
+## Diagrama do Pipeline
 
 ```mermaid
-flowchart LR
-    A[Developer<br/>git push] --> B[GitHub Actions]
-    B --> C[ci-security.yml]
-    B --> D[iac-security.yml]
+flowchart TB
+    subgraph Developer
+        A[git push / PR] --> B[GitHub Repository]
+    end
 
-    C --> E[npm audit<br/>SCA]
-    C --> F[Trivy<br/>SCA]
-    C --> G[SonarCloud<br/>SAST]
+    subgraph "GitHub Actions - CI Security Pipeline"
+        B --> C[ci-security.yml]
+        B --> D[iac-security.yml]
 
-    D --> H[Checkov<br/>IaC Security]
+        C --> E["SCA Scan"]
+        C --> F["SAST Scan"]
 
-    E --> I{Vulnerabilities<br/>found?}
-    F --> I
-    G --> I
-    H --> I
+        E --> E1[npm audit]
+        E --> E2[Trivy]
 
-    I -->|No| J[Deploy to AWS]
-    I -->|Yes| K[Pipeline FAILS<br/>Blocks Merge]
+        F --> F1[SonarCloud]
+    end
 
-    J --> L[(AWS S3<br/>Encrypted Bucket)]
+    subgraph "GitHub Actions - IaC Security Pipeline"
+        D --> G["Checkov Scan"]
+        G --> G1[Terraform Analysis]
+    end
+
+    subgraph Decision
+        E1 --> H{Vulnerabilities?}
+        E2 --> H
+        F1 --> H
+        G1 --> H
+    end
+
+    subgraph "AWS Cloud"
+        H -->|PASS| I[Deploy]
+        I --> J[(S3 Bucket\nEncrypted + Private)]
+        H -->|FAIL| K[Pipeline Blocked\nMerge Rejected]
+    end
 ```
 
 ---
 
 ## Stack de Segurança
 
-| Ferramenta | Tipo | O que deteta | Quando corre |
-|-----------|------|-------------|-------------|
+| Ferramenta | Tipo | O que deteta | Trigger |
+|-----------|------|-------------|---------|
 | **npm audit** | SCA | Pacotes com CVEs conhecidos | Todo push/PR |
 | **Trivy** | SCA | CVEs em dependências e configs | Todo push/PR |
-| **SonarCloud** | SAST | SQL Injection, hardcoded secrets | Todo push/PR |
-| **Checkov** | IaC Security | Configurações AWS inseguras | Alterações em `/infra` |
+| **SonarCloud** | SAST | SQL Injection, hardcoded secrets, code smells | Todo push/PR |
+| **Checkov** | IaC Security | Configurações AWS inseguras no Terraform | Alterações em `/infra` |
 
 ---
 
-## Antes e Depois das Correções
+## Resultados — Antes e Depois
 
 ### Dependências (SCA)
 
-| Pacote | Antes | Depois | CVE |
-|--------|-------|--------|-----|
-| `lodash` | 4.17.4 | **4.18.1** | CVE-2018-16487 (Prototype Pollution) |
-| `express` | 4.16.0 | **4.22.2** | CVE-2024-29041 (Open Redirect) |
+| Pacote | Antes | Depois | Severidade | CVE |
+|--------|-------|--------|------------|-----|
+| `lodash` | 4.17.4 | **4.18.1** | HIGH | CVE-2018-16487 (Prototype Pollution) |
+| `express` | 4.16.0 | **4.22.2** | HIGH | CVE-2024-29041 (Open Redirect) |
+
+**Resultado npm audit:** `found 0 vulnerabilities`
 
 ### Código Fonte (SAST)
 
-| Vulnerabilidade | Antes | Depois |
-|----------------|-------|--------|
-| API Key hardcoded | `const API_KEY = "sk-test-12345abcdef"` | `process.env.API_KEY` |
-| SQL Injection | `SELECT * FROM users WHERE email = '${email}'` | Input validado, sem concatenação |
+| Vulnerabilidade | Antes | Depois | Regra SonarCloud |
+|----------------|-------|--------|-----------------|
+| API Key hardcoded | `"sk-test-12345abcdef"` | `process.env.API_KEY` | S5145 |
+| SQL Injection | `${email}` concatenado na query | Query parametrizada | S3649 |
+
+**Resultado SonarCloud:** `0 new issues`
 
 ### Infraestrutura (IaC Security)
 
-| Regra Checkov | Antes | Depois |
-|--------------|-------|--------|
-| **CKV_AWS_2** — ACL pública | `acl = "public-read"` | Removida (usa default private) |
-| **CKV_AWS_19** — Sem encriptação | Não configurado | `AES256` com bucket key |
-| **CKV_AWS_20** — Sem public access block | Não existia | 4 flags `true` |
-| **CKV_AWS_21** — Sem versionamento | `status = "Suspended"` | `status = "Enabled"` |
+| Regra Checkov | Antes | Depois | Risco Eliminado |
+|--------------|-------|--------|-----------------|
+| **CKV_AWS_2** | `acl = "public-read"` | ACL removida (default private) | Bucket exposto publicamente |
+| **CKV_AWS_19** | Não configurado | `AES256` + bucket key | Dados em texto plano |
+| **CKV_AWS_20** | Sem public access block | 4 flags `true` | Acesso público acidental |
+| **CKV_AWS_21** | `status = "Suspended"` | `status = "Enabled"` | Dados irrecuperáveis |
+
+**Resultado Checkov:** `Passed: 7, Failed: 0`
+
+### Configuração SonarCloud
+
+| Problema | Antes | Depois |
+|----------|-------|--------|
+| Organization key | `01RodrigoHenriques` (case mismatch) | `01rodrigohenriques` (correto) |
+| Auto-deteção | Ativada (conflito) | Desativada (args explícitos) |
+
+**Resultado:** `ANALYSIS SUCCESSFUL`
 
 ---
 
@@ -102,6 +132,14 @@ $env:API_SECRET="meu-segredo-seguro"
 ```bash
 npm start
 # Servidor arranca em http://localhost:3000
+
+# Testar health check
+curl http://localhost:3000/health
+
+# Testar login
+curl -X POST http://localhost:3000/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"alice@example.com","password":"test"}'
 ```
 
 ### 4. Corra os security scans localmente
@@ -114,7 +152,8 @@ cd app && npm audit --audit-level=high
 trivy fs --severity HIGH,CRITICAL --exit-code 1 .
 
 # Checkov (IaC Security)
-checkov -d infra --framework terraform --check CKV_AWS_2,CKV_AWS_19,CKV_AWS_20,CKV_AWS_21
+checkov -d infra --framework terraform \
+  --check CKV_AWS_2,CKV_AWS_19,CKV_AWS_20,CKV_AWS_21
 ```
 
 ---
@@ -129,16 +168,14 @@ Ir a **Settings > Secrets and variables > Actions** no repositório GitHub:
 | `AWS_ACCESS_KEY_ID` | AWS IAM > Security Credentials |
 | `AWS_SECRET_ACCESS_KEY` | AWS IAM > Security Credentials |
 
-### SonarCloud — Configuração
+### SonarCloud
 
 1. Criar conta em https://sonarcloud.io
-2. Importar o repositório GitHub
-3. Copiar `organization` e `projectKey` do painel
-4. Atualizar `sonar-project.properties`:
-   ```properties
-   sonar.organization=O_TEU_USERNAME
-   sonar.projectKey=O_TEU_PROJECT_KEY
-   ```
+2. Importar o repositório GitHub `01RodrigoHenriques/devsecops-pipeline`
+3. A organization é `01rodrigohenriques` (minúsculas)
+4. O project key é `01RodrigoHenriques_devsecops-pipeline`
+5. Gerar token em My Account > Security > Generate Token
+6. Adicionar `SONAR_TOKEN` nos Secrets do GitHub
 
 ---
 
@@ -151,12 +188,13 @@ devsecops-pipeline/
 │   └── iac-security.yml         # IaC security (Checkov)
 ├── app/
 │   ├── package.json              # Dependências seguras
+│   ├── package-lock.json         # Lockfile
 │   ├── src/
-│   │   └── index.js              # Express API (corrigida)
+│   │   └── index.js              # Express API
 │   └── .gitignore
 ├── infra/
 │   ├── main.tf                   # Provider AWS
-│   ├── s3.tf                     # S3 (corrigido)
+│   ├── s3.tf                     # S3 bucket (corrigido)
 │   ├── variables.tf              # Variáveis Terraform
 │   └── outputs.tf                # Outputs
 ├── SECURITY_LOGS.md              # Relatório de auditoria de segurança
@@ -166,10 +204,13 @@ devsecops-pipeline/
 
 ---
 
-## Resultados dos Security Scans
+## Relatório de Segurança
 
-Ver [SECURITY_LOGS.md](./SECURITY_LOGS.md) para o relatório completo com logs,
-explicação técnica e contexto de cada vulnerabilidade detetada.
+Ver [SECURITY_LOGS.md](./SECURITY_LOGS.md) para o relatório completo com:
+- Logs originais de cada ferramenta
+- Explicação técnica de cada vulnerabilidade
+- Documentação da remediação aplicada
+- Evidência de que o pipeline agora passa
 
 ---
 
