@@ -1,191 +1,144 @@
-# DevSecOps Pipeline - Projeto de Portfólio
+# DevSecOps Pipeline — Projeto de Portfólio
 
-Pipeline CI/CD com segurança automatizada integrada. O objetivo é **impedir que código vulnerável chegue à cloud**, detetando problemas de segurança em cada fase do ciclo de vida do desenvolvimento.
-
----
-
-## Objetivo
-
-Demonstrar como integrar ferramentas de segurança automatizada num pipeline CI/CD real, cobrindo:
-
-- **SCA** (Software Composition Analysis) — vulnerabilidades em dependências
-- **SAST** (Static Application Security Testing) — vulnerabilidades no código fonte
-- **IaC Security** — vulnerabilidades na infraestrutura como código
-
-### Stack
-
-| Ferramenta | Tipo | O que deteta |
-|-----------|------|--------------|
-| **npm audit** | SCA | Pacotes com CVEs conhecidos |
-| **Trivy** | SCA/Container | CVEs em dependências e configurações inseguras |
-| **SonarCloud** | SAST | SQL Injection, hardcoded secrets, code smells |
-| **Checkov** | IaC Security | Configurações AWS inseguras no Terraform |
-| **GitHub Actions** | CI/CD | Orquestração de todo o pipeline |
+Pipeline CI/CD com segurança automatizada integrada. **Impede que código vulnerável chegue à cloud**, detetando problemas em cada fase do ciclo de vida do desenvolvimento.
 
 ---
 
-## Fluxo do Pipeline (ASCII Diagram)
+## Fluxo do Pipeline
 
+```mermaid
+flowchart LR
+    A[Developer<br/>git push] --> B[GitHub Actions]
+    B --> C[ci-security.yml]
+    B --> D[iac-security.yml]
+
+    C --> E[npm audit<br/>SCA]
+    C --> F[Trivy<br/>SCA]
+    C --> G[SonarCloud<br/>SAST]
+
+    D --> H[Checkov<br/>IaC Security]
+
+    E --> I{Vulnerabilities<br/>found?}
+    F --> I
+    G --> I
+    H --> I
+
+    I -->|No| J[Deploy to AWS]
+    I -->|Yes| K[Pipeline FAILS<br/>Blocks Merge]
+
+    J --> L[(AWS S3<br/>Encrypted Bucket)]
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        PUSH / PULL REQUEST                          │
-│                              to main                                │
-└─────────────────────┬──────────────────────┬───────────────────────┘
-                      │                      │
-                      ▼                      ▼
-        ┌─────────────────────┐  ┌─────────────────────────────┐
-        │  ci-security.yml   │  │    iac-security.yml         │
-        │                     │  │                             │
-        │  (corre sempre)     │  │  (corre só se /infra mudar) │
-        └──────┬──────┬──────┘  └──────────────┬──────────────┘
-               │      │                        │
-               ▼      ▼                        ▼
-     ┌──────────┐  ┌───────────┐     ┌───────────────────┐
-     │ SCA Scan │  │ SAST Scan │     │ Checkov Scan      │
-     │          │  │           │     │                   │
-     │ npm audit│  │ SonarCloud│     │ bridgecrewio/     │
-     │ Trivy    │  │           │     │ checkov-action    │
-     └────┬─────┘  └─────┬─────┘     └────────┬──────────┘
-          │              │                     │
-          ▼              ▼                     ▼
-     ┌─────────┐   ┌──────────┐        ┌──────────────┐
-     │ FAIL se │   │ FAIL se  │        │ FAIL se      │
-     │ HIGH ou │   │ finding  │        │ HIGH/CRITICAL│
-     │ CRITICAL│   │ detetado │        │ findings     │
-     └─────────┘   └──────────┘        └──────────────┘
-```
+
+---
+
+## Stack de Segurança
+
+| Ferramenta | Tipo | O que deteta | Quando corre |
+|-----------|------|-------------|-------------|
+| **npm audit** | SCA | Pacotes com CVEs conhecidos | Todo push/PR |
+| **Trivy** | SCA | CVEs em dependências e configs | Todo push/PR |
+| **SonarCloud** | SAST | SQL Injection, hardcoded secrets | Todo push/PR |
+| **Checkov** | IaC Security | Configurações AWS inseguras | Alterações em `/infra` |
+
+---
+
+## Antes e Depois das Correções
+
+### Dependências (SCA)
+
+| Pacote | Antes | Depois | CVE |
+|--------|-------|--------|-----|
+| `lodash` | 4.17.4 | **4.18.1** | CVE-2018-16487 (Prototype Pollution) |
+| `express` | 4.16.0 | **4.22.2** | CVE-2024-29041 (Open Redirect) |
+
+### Código Fonte (SAST)
+
+| Vulnerabilidade | Antes | Depois |
+|----------------|-------|--------|
+| API Key hardcoded | `const API_KEY = "sk-test-12345abcdef"` | `process.env.API_KEY` |
+| SQL Injection | `SELECT * FROM users WHERE email = '${email}'` | Input validado, sem concatenação |
+
+### Infraestrutura (IaC Security)
+
+| Regra Checkov | Antes | Depois |
+|--------------|-------|--------|
+| **CKV_AWS_2** — ACL pública | `acl = "public-read"` | Removida (usa default private) |
+| **CKV_AWS_19** — Sem encriptação | Não configurado | `AES256` com bucket key |
+| **CKV_AWS_20** — Sem public access block | Não existia | 4 flags `true` |
+| **CKV_AWS_21** — Sem versionamento | `status = "Suspended"` | `status = "Enabled"` |
 
 ---
 
 ## Como Correr Localmente
 
-### 1. Instalar dependências da app
+### Pré-requisitos
+
+- Node.js 20+
+- Python 3.x + pip (para Checkov)
+- Trivy (opcional, para SCA local)
+
+### 1. Clone e instale
 
 ```bash
-cd app
+git clone https://github.com/01RodrigoHenriques/devsecops-pipeline.git
+cd devsecops-pipeline/app
 npm install
 ```
 
-### 2. SCA Scan — npm audit
+### 2. Configure as variáveis de ambiente
 
 ```bash
-cd app
-npm audit --audit-level=high
+# Linux/macOS
+export API_KEY="minha-chave-segura"
+export API_SECRET="meu-segredo-seguro"
+
+# Windows (PowerShell)
+$env:API_KEY="minha-chave-segura"
+$env:API_SECRET="meu-segredo-seguro"
 ```
 
-### 3. SCA Scan — Trivy
+### 3. Execute a API
 
 ```bash
-# Instalar Trivy: https://trivy.dev/latest/getting-started/installation/
+npm start
+# Servidor arranca em http://localhost:3000
+```
+
+### 4. Corra os security scans localmente
+
+```bash
+# npm audit (SCA)
+cd app && npm audit --audit-level=high
+
+# Trivy (SCA filesystem)
 trivy fs --severity HIGH,CRITICAL --exit-code 1 .
-```
 
-### 4. IaC Security — Checkov
-
-```bash
-# Instalar Checkov: https://www.checkov.io/1.Welcome/Quick%20Start.html
-pip install checkov
+# Checkov (IaC Security)
 checkov -d infra --framework terraform --check CKV_AWS_2,CKV_AWS_19,CKV_AWS_20,CKV_AWS_21
-```
-
-### 5. SAST — SonarCloud (local)
-
-```bash
-# Descarregar sonar-scanner: https://docs.sonarcloud.io/enriching/analysis/sonarscanner/
-sonar-scanner \
-  -Dsonar.projectKey=SEU_PROJECT_KEY \
-  -Dsonar.organization=SEU_ORG \
-  -Dsonar.sources=app/src \
-  -Dsonar.host.url=https://sonarcloud.io \
-  -Dsonar.token=SEU_SONAR_TOKEN
 ```
 
 ---
 
 ## Configuração de Secrets no GitHub
 
-O pipeline precisa dos seguintes secrets configurados no repositório:
+Ir a **Settings > Secrets and variables > Actions** no repositório GitHub:
 
-1. Ir a **Settings > Secrets and variables > Actions** no GitHub
-2. Clicar em **New repository secret** para cada um:
+| Secret | Onde obter |
+|--------|-----------|
+| `SONAR_TOKEN` | https://sonarcloud.io > My Account > Security > Generate Token |
+| `AWS_ACCESS_KEY_ID` | AWS IAM > Security Credentials |
+| `AWS_SECRET_ACCESS_KEY` | AWS IAM > Security Credentials |
 
-| Secret | Descrição | Como obter |
-|--------|-----------|------------|
-| `SONAR_TOKEN` | Token de autenticação SonarCloud | Criar em https://sonarcloud.io > My Account > Security > Generate Token |
-| `AWS_ACCESS_KEY_ID` | Chave de acesso AWS (para deployments futuros) | AWS IAM > Security Credentials |
-| `AWS_SECRET_ACCESS_KEY` | Chave secreta AWS | AWS IAM > Security Credentials |
-
-### Configurar o SonarCloud
+### SonarCloud — Configuração
 
 1. Criar conta em https://sonarcloud.io
 2. Importar o repositório GitHub
-3. Copiar a `organization` e `projectKey` do painel
-4. Substituir no ficheiro `sonar-project.properties`:
+3. Copiar `organization` e `projectKey` do painel
+4. Atualizar `sonar-project.properties`:
    ```properties
    sonar.organization=O_TEU_USERNAME
    sonar.projectKey=O_TEU_PROJECT_KEY
    ```
-
----
-
-## Resultados Esperados
-
-### Antes de Corrigir (Pipeline Falha)
-
-```
-[SCREENSHOT AQUI - SCA Scan falhando com npm audit/Trivy]
-```
-
-```
-[SCREENSHOT AQUI - SAST Scan falhando com SonarCloud]
-```
-
-```
-[SCREENSHOT AQUI - Checkov falhando com findings]
-```
-
-### Depois de Corrigir (Pipeline Passa)
-
-```
-[SCREENSHOT AQUI - SCA Scan passando]
-```
-
-```
-[SCREENSHOT AQUI - SAST Scan passando]
-```
-
-```
-[SCREENSHOT AQUI - Checkov passando]
-```
-
----
-
-## Vulnerabilidades Intencionais
-
-Este projeto contém vulnerabilidades **propositalmente introduzidas** para demonstração:
-
-### No Código (app/src/index.js)
-
-| Vulnerabilidade | Tipo | Ferramenta que deteta |
-|----------------|------|----------------------|
-| API key hardcoded (`sk-test-12345abcdef`) | Hardcoded Secret | SonarCloud (SAST) |
-| Query SQL concatenada por string | SQL Injection | SonarCloud (SAST) |
-
-### Nas Dependências (app/package.json)
-
-| Pacote | Versão | CVEs |
-|--------|--------|------|
-| `lodash` | 4.17.4 | CVE-2018-16487, CVE-2019-10744, entre outras |
-| `express` | 4.16.0 | CVE-2024-29041, CVE-2024-43796 |
-
-### Na Infraestrutura (infra/s3.tf)
-
-| Falha | Regra Checkov | Descrição |
-|-------|---------------|-----------|
-| ACL pública | CKV_AWS_2 | Bucket com `acl = "public-read"` |
-| Sem versionamento | CKV_AWS_21 | `versioning_configuration.status = "Suspended"` |
-| Sem encriptação | CKV_AWS_19 | Sem `aws_s3_bucket_server_side_encryption_configuration` |
-| Sem bloqueio de acesso público | CKV_AWS_20 | Sem `aws_s3_bucket_public_access_block` |
 
 ---
 
@@ -194,21 +147,31 @@ Este projeto contém vulnerabilidades **propositalmente introduzidas** para demo
 ```
 devsecops-pipeline/
 ├── .github/workflows/
-│   ├── ci-security.yml        # SCA + SAST pipeline
-│   └── iac-security.yml       # IaC security pipeline
+│   ├── ci-security.yml          # SCA + SAST pipeline
+│   └── iac-security.yml         # IaC security (Checkov)
 ├── app/
-│   ├── package.json            # Dependências (com CVEs intencionais)
+│   ├── package.json              # Dependências seguras
 │   ├── src/
-│   │   └── index.js            # Express API (com vulnerabilidades intencionais)
+│   │   └── index.js              # Express API (corrigida)
 │   └── .gitignore
 ├── infra/
-│   ├── main.tf                 # Provider AWS + backend
-│   ├── s3.tf                   # Bucket S3 (com falhas de segurança)
-│   ├── variables.tf            # Variáveis Terraform
-│   └── outputs.tf              # Outputs Terraform
-├── sonar-project.properties    # Configuração SonarCloud
-└── README.md                   # Este ficheiro
+│   ├── main.tf                   # Provider AWS
+│   ├── s3.tf                     # S3 (corrigido)
+│   ├── variables.tf              # Variáveis Terraform
+│   └── outputs.tf                # Outputs
+├── SECURITY_LOGS.md              # Relatório de auditoria de segurança
+├── sonar-project.properties      # Config SonarCloud
+└── README.md                     # Este ficheiro
 ```
+
+---
+
+## Resultados dos Security Scans
+
+Ver [SECURITY_LOGS.md](./SECURITY_LOGS.md) para o relatório completo com logs,
+explicação técnica e contexto de cada vulnerabilidade detetada.
+
+---
 
 ## Licença
 

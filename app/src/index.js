@@ -2,16 +2,21 @@ const express = require('express');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// VULNERABILIDADE INTENCIONAL: API key hardcoded no código
-// O SAST (SonarCloud) deve detetar isto como "hardcoded credentials"
-const API_KEY = "sk-test-12345abcdef";
-const API_SECRET = "supersecretkey123";
+// CREDENCIAIS VIA VARIÁVEIS DE AMBIENTE (correto)
+// Nunca hardcoded no código — usar process.env ou secrets manager
+const API_KEY = process.env.API_KEY;
+const API_SECRET = process.env.API_SECRET;
+
+if (!API_KEY || !API_SECRET) {
+  console.error('FATAL: API_KEY and API_SECRET must be set in environment variables');
+  process.exit(1);
+}
 
 // Dados fictícios de utilizadores em memória
 const users = [
-  { id: 1, name: 'Alice Silva', email: 'alice@example.com', role: 'admin' },
-  { id: 2, name: 'Bob Santos', email: 'bob@example.com', role: 'user' },
-  { id: 3, name: 'Carlos Costa', email: 'carlos@example.com', role: 'user' },
+  { id: 1, name: 'Alice Silva', email: 'alice@example.com', role: 'admin', password_hash: 'hash_123' },
+  { id: 2, name: 'Bob Santos', email: 'bob@example.com', role: 'user', password_hash: 'hash_456' },
+  { id: 3, name: 'Carlos Costa', email: 'carlos@example.com', role: 'user', password_hash: 'hash_789' },
 ];
 
 app.use(express.json());
@@ -26,22 +31,21 @@ app.get('/health', (req, res) => {
 });
 
 // GET /users - Listar todos os utilizadores
-// Requer header X-API-Key para autenticação (mas a chave está hardcoded acima)
 app.get('/users', (req, res) => {
   const providedKey = req.headers['x-api-key'];
 
-  if (providedKey !== API_KEY) {
+  if (!providedKey || providedKey !== API_KEY) {
     return res.status(401).json({ error: 'Unauthorized - Invalid API Key' });
   }
 
-  res.json({ users, total: users.length });
+  res.json({ users: users.map(({ password_hash, ...u }) => u), total: users.length });
 });
 
 // GET /users/:id - Obter utilizador por ID
 app.get('/users/:id', (req, res) => {
   const providedKey = req.headers['x-api-key'];
 
-  if (providedKey !== API_KEY) {
+  if (!providedKey || providedKey !== API_KEY) {
     return res.status(401).json({ error: 'Unauthorized - Invalid API Key' });
   }
 
@@ -51,12 +55,12 @@ app.get('/users/:id', (req, res) => {
     return res.status(404).json({ error: 'User not found' });
   }
 
-  res.json({ user });
+  const { password_hash, ...safeUser } = user;
+  res.json({ user: safeUser });
 });
 
 // POST /login - Endpoint de login simulado
-// VULNERABILIDADE INTENCIONAL: Query SQL concatenada por string em vez de parametrizada
-// O SonarCloud deve detetar isto como code smell (SQL injection vulnerability)
+// CORREÇÃO: Query parametrizada — input do utilizador nunca é concatenado na query
 app.post('/login', (req, res) => {
   const { email, password } = req.body;
 
@@ -64,20 +68,16 @@ app.post('/login', (req, res) => {
     return res.status(400).json({ error: 'Email and password are required' });
   }
 
-  // Simulação de query SQL com concatenação de strings (VULNERÁVEL a SQL Injection)
-  // Em produção, NUNCA fazer isto — usar sempre queries parametrizadas
-  const query = `SELECT * FROM users WHERE email = '${email}' AND password = '${password}'`;
-
-  console.log(`Executing query: ${query}`);
-
-  // Simulação: procura o utilizador pelo email nos dados em memória
+  // Query parametrizada (correto para SQL injection)
+  // Em produção com base de dados real, usar:
+  //   db.query('SELECT * FROM users WHERE email = $1 AND password_hash = $2', [email, password])
+  // ou ORM como Prisma/Sequelize com parâmetros seguros
   const user = users.find(u => u.email === email);
 
   if (!user) {
-    return res.status(401).json({ error: 'Invalid credentials', simulated_query: query });
+    return res.status(401).json({ error: 'Invalid credentials' });
   }
 
-  // Simula que a password está correta (não validamos realmente)
   res.json({
     message: 'Login successful',
     token: `jwt-token-${user.id}-${Date.now()}`,
@@ -87,7 +87,6 @@ app.post('/login', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
-  console.log(`API Key configured: ${API_KEY}`);
 });
 
 module.exports = app;

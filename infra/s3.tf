@@ -1,7 +1,11 @@
 # ============================================================
-# BUCKET S3 COM FALHAS DE SEGURANÇA PROPOSITAIS
-# Estas falhas são detetadas pelo Checkov como code smells
-# de infraestrutura (IaC Security).
+# BUCKET S3 — VERSÃO CORRIGIDA (Passa no Checkov)
+# ============================================================
+# Todas as 4 falhas de segurança foram corrigidas:
+#   - CKV_AWS_2:  Removida ACL pública
+#   - CKV_AWS_19: Adicionada encriptação server-side (AES256)
+#   - CKV_AWS_20: Adicionado bloqueio de acesso público
+#   - CKV_AWS_21: Versionamento ativado
 # ============================================================
 
 resource "aws_s3_bucket" "demo_bucket" {
@@ -13,44 +17,36 @@ resource "aws_s3_bucket" "demo_bucket" {
   }
 }
 
-# ============================================================
-# FALHA 1: ACL Pública
-# ============================================================
-# Vai falhar CKV_AWS_2: "S3 Bucket should not have ACL defined"
-# Usar "public-read" expõe o conteúdo do bucket publicamente.
-# A prática correta é não definir ACL e usar políticas de acesso.
-resource "aws_s3_bucket_acl" "demo_bucket_acl" {
-  bucket = aws_s3_bucket.demo_bucket.id
-  acl    = "public-read"
-}
-
-# ============================================================
-# FALHA 2: Sem Versionamento
-# ============================================================
-# Vai falhar CKV_AWS_21: "Ensure S3 bucket versioning is enabled"
-# Sem versionamento, ficheiros eliminados ou sobrescritos não
-# podem ser recuperados. Essencial para recuperação de desastres.
+# CORREÇÃO CKV_AWS_21: Versionamento ativado (era "Suspended")
 resource "aws_s3_bucket_versioning" "demo_bucket_versioning" {
   bucket = aws_s3_bucket.demo_bucket.id
 
   versioning_configuration {
-    status = "Suspended"
+    status = "Enabled"
   }
 }
 
-# ============================================================
-# FALHA 3: Sem Encriptação Server-Side
-# ============================================================
-# Vai falhar CKV_AWS_19: "Ensure S3 bucket server-side encryption is enabled"
-# Sem encriptação, dados em repouso ficam em texto plano no S3.
-# Deve-se configurar SSE com KMS ou AES256.
-# NOTA: Este recurso intencionalmente NÃO configura o encryption.
-# Se for descomentar, deve usar aws_s3_bucket_server_side_encryption_configuration.
+# CORREÇÃO CKV_AWS_19: Encriptação server-side com AES256
+resource "aws_s3_bucket_server_side_encryption_configuration" "demo_bucket_encryption" {
+  bucket = aws_s3_bucket.demo_bucket.id
 
-# ============================================================
-# FALHA 4: Sem Bloqueio de Acesso Público
-# ============================================================
-# Vai falhar CKV_AWS_20: "Ensure S3 bucket is not publicly accessible"
-# Sem aws_s3_bucket_public_access_block (ou com tudo a false),
-# o bucket pode ser exposto publicamente acidentalmente.
-# Deve bloquear todo acesso público com aws_s3_bucket_public_access_block.
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+    bucket_key_enabled = true
+  }
+}
+
+# CORREÇÃO CKV_AWS_20: Bloqueio total de acesso público
+resource "aws_s3_bucket_public_access_block" "demo_bucket_public_access" {
+  bucket = aws_s3_bucket.demo_bucket.id
+
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+# CORREÇÃO CKV_AWS_2: Sem ACL pública (removido aws_s3_bucket_acl)
+# O bucket usa por padrão "private" quando não se define ACL explícita.
