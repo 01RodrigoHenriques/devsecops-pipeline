@@ -1,0 +1,108 @@
+# ============================================================
+# Pipeline CI/CD com Segurança Automatizada
+# ============================================================
+# Este workflow corre em cada push/PR para a branch main e executa:
+#   1. SCA Scan (Software Composition Analysis) com npm audit + Trivy
+#   2. SAST Scan (Static Application Security Testing) com SonarCloud
+#
+# Objetivo: detetar vulnerabilidades em dependências e código
+#           ANTES de chegar à produção.
+# ============================================================
+
+name: CI Security Pipeline
+
+# Dispara em push para main ou em pull requests para main
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ==========================================================
+  # JOB 1: SCA Scan (Software Composition Analysis)
+  # ==========================================================
+  # Verifica vulnerabilidades em dependências (npm audit)
+  # e ficheiros/containers (Trivy) com CVEs conhecidos.
+  sca-scan:
+    name: "SCA - Dependency & Vulnerability Scan"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./app
+
+    steps:
+      # Checkout do código fonte do repositório
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Configurar Node.js para instalar dependências
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: app/package-lock.json
+
+      # Instalar dependências do projeto
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      # ==========================================================
+      # npm audit - Verifica pacotes com CVEs conhecidos
+      # ==========================================================
+      # O flag --audit-level=high faz o comando falhar apenas
+      # para vulnerabilidades de severidade HIGH ou CRITICAL.
+      # Isto evita falsos positivos de severidade LOW/MEDIUM.
+      - name: Run npm audit
+        run: npm audit --audit-level=high --omit=dev
+
+      # ==========================================================
+      # Trivy - Scanner de vulnerabilidades filesystem
+      # ==========================================================
+      # O Trivy analisa o filesystem procurando:
+      #   - CVEs em pacotes de dependências
+      #   - Ficheiros de configuração inseguros
+      #   - Secrets expostos no código
+      # exit-code: 1 = falhar o workflow se encontrar vulnerabilidades
+      # severity: CRITICAL,HIGH = apenas falhar para severidade alta
+      - name: Run Trivy filesystem scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: "fs"
+          scan-ref: "."
+          exit-code: "1"
+          severity: "CRITICAL,HIGH"
+          format: "table"
+
+  # ==========================================================
+  # JOB 2: SAST Scan (Static Application Security Testing)
+  # ==========================================================
+  # Analisa o código fonte estático procurando:
+  #   - SQL Injection, XSS, e outras vulnerabilidades OWASP
+  #   - Code smells e más práticas de código
+  #   - Secrets hardcoded no código
+  #   - Cobertura de código e duplicações
+  sast-scan:
+    name: "SAST - SonarCloud Analysis"
+    runs-on: ubuntu-latest
+
+    steps:
+      # Checkout do código fonte
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # depth: 0 necessário para o SonarCloud analisar
+          # todo o histórico (blame information)
+          fetch-depth: 0
+
+      # ==========================================================
+      # SonarCloud Scan
+      # ==========================================================
+      # O SonarCloud lê a configuração de sonar-project.properties
+      # na raiz do repositório. Necessita do SONAR_TOKEN como
+      # variável de ambiente para autenticar com o SonarCloud.
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarqube-scan-action@master
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

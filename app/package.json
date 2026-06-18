@@ -1,0 +1,21 @@
+{
+  "name": "devsecops-demo-api",
+  "version": "1.0.0",
+  "description": "Demo API for DevSecOps pipeline demonstration with intentional vulnerabilities",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "test": "echo \"No tests yet\" && exit 0"
+  },
+  "dependencies": {
+    "express": "4.16.0",
+    "lodash": "4.17.4"
+  },
+  "devDependencies": {
+    "nodemon": "^2.0.20"
+  },
+  "keywords": ["devsecops", "demo", "security"],
+  "author": "Portfolio Project",
+  "license": "MIT"
+}

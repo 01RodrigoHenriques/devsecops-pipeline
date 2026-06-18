@@ -1,0 +1,81 @@
+# ============================================================
+# Pipeline de Segurança para Infraestrutura as Code (IaC)
+# ============================================================
+# Este workflow verifica a segurança da infraestrutura definida
+# em Terraform usando o Checkov.
+#
+# O Checkov analisa código IaC procurando:
+#   - Configurações inseguras em cloud (AWS, Azure, GCP)
+#   - Violações de compliance (CIS, NIST, PCI-DSS)
+#   - Falhas de segurança em containers e Kubernetes
+# ============================================================
+
+name: IaC Security Scan
+
+# Dispara apenas quando há alterações na pasta /infra
+# Isto evita workflows desnecessários quando se muda só código da app
+on:
+  push:
+    branches: [main]
+    paths:
+      - "infra/**"
+  pull_request:
+    branches: [main]
+    paths:
+      - "infra/**"
+
+jobs:
+  # ==========================================================
+  # JOB: Checkov - IaC Security Scanner
+  # ==========================================================
+  # O Checkov é uma ferramenta open-source da Bridgecrew
+  # que analisa Terraform, CloudFormation, Kubernetes, e mais.
+  #
+  # Regras relevantes para este projeto:
+  #   CKV_AWS_2  - Bucket não deve ter ACL pública
+  #   CKV_AWS_19 - Bucket deve ter encriptação server-side
+  #   CKV_AWS_20 - Bucket não deve ser publicamente acessível
+  #   CKV_AWS_21 - Bucket deve ter versionamento ativado
+  checkov-scan:
+    name: "Checkov - Terraform Security Scan"
+    runs-on: ubuntu-latest
+
+    steps:
+      # Checkout do código fonte
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ==========================================================
+      # Checkov Scan
+      # ==========================================================
+      # scan-folder: diretoria a analisar (neste caso /infra)
+      # framework: tipo de IaC a analisar (Terraform neste caso)
+      # soft_fail: false = falhar o workflow se houver findings
+      # output_format: mostra resultados em formato CLI legível
+      # check: filtrar apenas para checks relevantes de S3
+      #
+      # NOTA: O --check filtra apenas as regras que queremos testar.
+      # Para uma auditoria completa, remover o flag --check.
+      - name: Run Checkov scan
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: infra
+          framework: terraform
+          soft_fail: false
+          output_format: cli
+          skip_check: "CKV_AWS_18,CKV_AWS_139"
+          check: "CKV_AWS_2,CKV_AWS_19,CKV_AWS_20,CKV_AWS_21"
+
+      # ==========================================================
+      # Step opcional: Upload de resultados como artifact
+      # ==========================================================
+      # Guarda o relatório do Checkov como artifact do workflow
+      # para consulta posterior na página do GitHub Actions.
+      - name: Upload Checkov results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: checkov-results
+          path: results/CTKJ*.json
+          retention-days: 30
+          if-no-files-found: ignore
