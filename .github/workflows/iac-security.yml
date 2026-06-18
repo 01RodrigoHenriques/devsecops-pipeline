@@ -62,20 +62,16 @@ jobs:
           directory: infra
           framework: terraform
           soft_fail: false
-          output_format: cli
+          output_format: cli,sarif
+          output_file_path: console,checkov-results.sarif
           skip_check: "CKV_AWS_18,CKV_AWS_139"
           check: "CKV_AWS_2,CKV_AWS_19,CKV_AWS_20,CKV_AWS_21"
 
-      # ==========================================================
-      # Step opcional: Upload de resultados como artifact
-      # ==========================================================
-      # Guarda o relatório do Checkov como artifact do workflow
-      # para consulta posterior na página do GitHub Actions.
       - name: Upload Checkov results
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: checkov-results
-          path: results/CTKJ*.json
+          path: checkov-results.sarif
           retention-days: 30
           if-no-files-found: ignore
